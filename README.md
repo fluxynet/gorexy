@@ -41,3 +41,6 @@ Configuration file must be in json format. Sample configuration file:
 ```
 
 Paths are matched sequentially using `HasPrefix` rule. `/api` will match any path starting with api whereas `/` will match all paths.
+
+## Credits
+Websocket information adapted from bradfitz and Fatih Arslan contributions on groups.google.com [thread](https://groups.google.com/forum/#!topic/golang-nuts/KBx9pDlvFOc).
