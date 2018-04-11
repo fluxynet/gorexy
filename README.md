@@ -1,20 +1,43 @@
 # Gorexy
 
-Gorexy is a very simple go http reverse proxy server for development environments.
+Gorexy is a very simple reverse proxy server for development environments. It is written in go and supports `http` and `ws` connections.
 
 ## Configuration
 
-Environment Variable | Default      | Description
----------------------|--------------|--------------
-`PORT`               | `1337`       | Port where gorexy listens to
-`MAPPING`            | `gorexy.cfg` | Mapping file to used
+Environment Variable | Default       | Description
+---------------------|---------------|--------------
+`CONF`               | `gorexy.json` | Config file to use
+`PORT`               | `1337`        | Port where gorexy listens to. Takes precedence over `gorexy.json`
 
-## Mapping
-Sample mapping
+Environment variables may be used as follows:
 
 ```
-/admin http://localhost:8888
-/ http://localhost:8080
+CONF=myconfig.json gorexy
+PORT=1337 gorexy
+PORT=1337 CONF=myconfig.json gorexy
 ```
 
-Each line must have the format `[path] [target]`.
+## Config file
+Configuration file must be in json format. Sample configuration file:
+
+```json
+{
+    "mappings": [
+        {
+            "path": "/api", //destination to reverse proxy from
+            "destination": "http://localhost:8888" //url to reverse proxy to
+        },
+        {
+            "path": "/", //different path
+            "destination": "http://localhost:8080"
+        },
+        {
+            "path": "/",
+            "destination": "ws://localhost:8080" //use websocket
+        }
+    ],
+    "port": 8000 //port that gorexy binds to
+}
+```
+
+Paths are matched sequentially using `HasPrefix` rule. `/api` will match any path starting with api whereas `/` will match all paths.

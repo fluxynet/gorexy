@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -8,47 +9,51 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/fluxynet/gorexy/wsutils"
 )
+
+const httpMapping = "http"
+const wsMapping = "ws"
+
+//Config represents application configuration as loaded from gorexy.json
+type Config struct {
+	Mappings []*Mapping `json:"mappings"`
+	Port     *int       `json:"port"`
+}
+
+//Mapping represents a proxy mapping
+type Mapping struct {
+	Path        *string `json:"path"`
+	Destination *string `json:"destination"`
+}
 
 var (
 	mapping map[string]string
-	proxies map[string]*httputil.ReverseProxy
-	api     *httputil.ReverseProxy
-	webpack *httputil.ReverseProxy
+	htprox  map[string]*httputil.ReverseProxy
+	wsprox  map[string]*wsutils.ReverseProxy
+	port    int
 )
 
-func forwarder(w http.ResponseWriter, r *http.Request) {
-	for prefix, proxy := range proxies {
-		if strings.HasPrefix(r.URL.Path, prefix) {
-			proxy.ServeHTTP(w, r)
-			return
-		}
-	}
-
-	w.WriteHeader(http.StatusBadGateway)
-	fmt.Fprintf(w, "Uknown Gateway for prefix: %s", r.URL.Path)
-}
-
 func main() {
-	var err error
+	var (
+		err    error
+		config *Config
+	)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "1337"
+	confile := os.Getenv("CONF")
+	if confile == "" {
+		confile = "gorexy.json"
 	}
 
-	mapFile := os.Getenv("MAPPING")
-	if mapFile == "" {
-		mapFile = "gorexy.cfg"
-	}
-
-	mapping, err = loadMappings(mapFile)
+	config, err = loadConfig(confile)
 	if err != nil {
-		log.Fatalf("Failed to load mappings: %s", err)
+		log.Fatalf("Failed to load config file: %s", err)
 	}
 
-	proxies, err = createProxies(mapping)
+	htprox, wsprox, err = createProxies(config.Mappings)
 
 	if err != nil {
 		log.Fatalf("Invalid mapping: %s", err)
@@ -56,6 +61,7 @@ func main() {
 
 	http.HandleFunc("/", forwarder)
 
+	port := strconv.Itoa(*config.Port)
 	log.Println("Listening on :" + port)
 	err = http.ListenAndServe(":"+port, nil)
 	if err != nil {
@@ -64,44 +70,86 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func loadMappings(filename string) (map[string]string, error) {
-	mapping := make(map[string]string)
+func forwarder(w http.ResponseWriter, r *http.Request) {
+	if wsutils.IsWebsocket(r) {
+		for prefix, proxy := range wsprox {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+	} else {
+		for prefix, proxy := range htprox {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+	}
 
-	data, err := ioutil.ReadFile(filename)
+	w.WriteHeader(http.StatusBadGateway)
+	fmt.Fprintf(w, "Uknown Gateway for prefix: %s", r.URL.Path)
+}
+
+func loadConfig(filename string) (*Config, error) {
+	var (
+		err    error
+		data   []byte
+		config = new(Config)
+	)
+
+	data, err = ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		fields := strings.Split(line, " ")
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("invalid mapping config. expected 2 fields separated by space, got %d for %s", len(fields), line)
-		}
-
-		mapping[fields[0]] = fields[1]
+	config = new(Config)
+	err = json.Unmarshal(data, config)
+	if err != nil {
+		return nil, err
 	}
 
-	return mapping, nil
+	envport := os.Getenv("PORT")
+	if envport != "" {
+		*config.Port, err = strconv.Atoi(envport)
+	} else if config.Port == nil {
+		*config.Port = 1337
+	}
+
+	return config, err
 }
 
-func createProxies(mapping map[string]string) (map[string]*httputil.ReverseProxy, error) {
+func createProxies(mappings []*Mapping) (map[string]*httputil.ReverseProxy, map[string]*wsutils.ReverseProxy, error) {
 	var (
-		err     error
-		proxies = make(map[string]*httputil.ReverseProxy)
+		err    error
+		htprox = make(map[string]*httputil.ReverseProxy)
+		wsprox = make(map[string]*wsutils.ReverseProxy)
 	)
 
-	for prefix, target := range mapping {
+	for i, mapping := range mappings {
 		var url *url.URL
 
-		url, err = url.Parse(target)
-		if err != nil {
-			return nil, err
+		if mapping.Path == nil {
+			return nil, nil, fmt.Errorf("mapping path not found at element %d", i+1)
 		}
 
-		proxies[prefix] = httputil.NewSingleHostReverseProxy(url)
+		if mapping.Destination == nil {
+			return nil, nil, fmt.Errorf("mapping destination not found at element %d", i+1)
+		}
 
+		url, err = url.Parse(*mapping.Destination)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid url %s: %s", *mapping.Destination, err)
+		}
+
+		if url.Scheme == httpMapping {
+			htprox[*mapping.Path] = httputil.NewSingleHostReverseProxy(url)
+		} else if url.Scheme == wsMapping {
+			wsprox[*mapping.Path] = wsutils.NewReverseProxy(url)
+		} else {
+			return nil, nil, fmt.Errorf("invalid mapping type %s for %s -> %s", url.Scheme, *mapping.Path, *mapping.Destination)
+		}
 	}
 
-	return proxies, err
+	return htprox, wsprox, err
 }
