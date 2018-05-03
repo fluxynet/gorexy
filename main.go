@@ -124,7 +124,10 @@ func main() {
 		wg.Add(1)
 		port := strconv.Itoa(config.Port)
 		go func() {
-			http.ListenAndServe(":"+port, nil)
+			e := http.ListenAndServe(":"+port, nil)
+			if e != nil {
+				fmt.Println("Error serving http: ", e)
+			}
 			wg.Done()
 		}()
 		log.Println("HTTP listening on :" + port)
@@ -134,7 +137,10 @@ func main() {
 		wg.Add(1)
 		port := strconv.Itoa(config.Port + 1)
 		go func() {
-			http.ListenAndServeTLS(":"+port, normalizePath(config.HTTPS.Certfile, true), normalizePath(config.HTTPS.Keyfile, true), nil)
+			e := http.ListenAndServeTLS(":"+port, normalizePath(config.HTTPS.Certfile, true), normalizePath(config.HTTPS.Keyfile, true), nil)
+			if e != nil {
+				fmt.Println("Error serving https: ", e)
+			}
 			wg.Done()
 		}()
 		log.Println("HTTPS listening on :" + port)
