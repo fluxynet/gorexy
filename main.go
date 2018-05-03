@@ -29,6 +29,11 @@ type Config struct {
 	Services []*Service `json:"services"`
 	Port     int        `json:"port"`
 	Parallel bool       `json:"parallel"`
+	HTTPS    struct {
+		Enabled  bool   `json:"enabled"`
+		Certfile string `json:"cert"`
+		Keyfile  string `json:"key"`
+	} `json:"https"`
 }
 
 //Mapping represents a proxy mapping
@@ -109,9 +114,17 @@ func main() {
 
 	port := strconv.Itoa(config.Port)
 	log.Println("Listening on :" + port)
-	err = http.ListenAndServe(":"+port, nil)
-	if err != nil {
-		log.Fatal("Failed to start http server: ", err)
+
+	if config.HTTPS.Enabled {
+		err = http.ListenAndServeTLS(":"+port, config.HTTPS.Certfile, config.HTTPS.Keyfile, nil)
+		if err != nil {
+			log.Fatal("Failed to start https server: ", err)
+		}
+	} else {
+		err = http.ListenAndServe(":"+port, nil)
+		if err != nil {
+			log.Fatal("Failed to start http server: ", err)
+		}
 	}
 	log.Println("Server stopped")
 }

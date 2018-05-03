@@ -1,3 +1,5 @@
 gorexy
 gorexy.json
 debug
+cert.pem
+key.pem
