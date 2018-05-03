@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,10 +26,10 @@ const wsMapping = "ws"
 
 //Config represents application configuration as loaded from gorexy.json
 type Config struct {
-	Mappings []*Mapping `json:"mappings"`
-	Services []*Service `json:"services"`
-	Port     int        `json:"port"`
-	Parallel bool       `json:"parallel"`
+	Mappings []Mapping `json:"mappings"`
+	Services []Service `json:"services"`
+	Port     int       `json:"port"`
+	Parallel bool      `json:"parallel"`
 	HTTPS    struct {
 		Enabled  bool   `json:"enabled"`
 		Certfile string `json:"cert"`
@@ -54,8 +55,10 @@ var (
 	mapping map[string]string
 	htprox  map[string]*httputil.ReverseProxy
 	wsprox  map[string]*wsutils.ReverseProxy
-	ports   []string
+	ports   map[string]string
 	port    int
+
+	portRegex = regexp.MustCompile(`(?m)\{PORT(?P<port>[0-9]+)\}`)
 
 	gopath = func() string {
 		if g := os.Getenv("GOPATH"); g != "" {
@@ -100,6 +103,8 @@ func main() {
 		config.Port = 8000
 	}
 
+	initPorts(config.Port, config.Services)
+
 	err = startServices(config.Services, config.Port, config.Parallel)
 	if err != nil {
 		log.Fatalf("Failed to start services: %s", err)
@@ -116,7 +121,7 @@ func main() {
 	log.Println("Listening on :" + port)
 
 	if config.HTTPS.Enabled {
-		err = http.ListenAndServeTLS(":"+port, config.HTTPS.Certfile, config.HTTPS.Keyfile, nil)
+		err = http.ListenAndServeTLS(":"+port, normalizePath(config.HTTPS.Certfile, true), normalizePath(config.HTTPS.Keyfile, true), nil)
 		if err != nil {
 			log.Fatal("Failed to start https server: ", err)
 		}
@@ -178,7 +183,7 @@ func loadConfig(filename string) (*Config, error) {
 	return config, err
 }
 
-func createProxies(mappings []*Mapping) (map[string]*httputil.ReverseProxy, map[string]*wsutils.ReverseProxy, error) {
+func createProxies(mappings []Mapping) (map[string]*httputil.ReverseProxy, map[string]*wsutils.ReverseProxy, error) {
 	var (
 		err    error
 		htprox = make(map[string]*httputil.ReverseProxy)
@@ -196,11 +201,7 @@ func createProxies(mappings []*Mapping) (map[string]*httputil.ReverseProxy, map[
 			return nil, nil, fmt.Errorf("mapping destination not found at element %d", i+1)
 		}
 
-		if strings.Index(mapping.Destination, "{PORT") != -1 {
-			for p, port := range ports {
-				mapping.Destination = strings.Replace(mapping.Destination, "{PORT"+strconv.Itoa(p+1)+"}", port, -1)
-			}
-		}
+		mapping.Destination = parsePorts(mapping.Destination)
 
 		url, err = url.Parse(mapping.Destination)
 		if err != nil {
@@ -219,7 +220,33 @@ func createProxies(mappings []*Mapping) (map[string]*httputil.ReverseProxy, map[
 	return htprox, wsprox, err
 }
 
-func startServices(services []*Service, port int, parallel bool) error {
+func initPorts(basePort int, services []Service) {
+	ports = make(map[string]string)
+	p := basePort + 1
+
+	for _, service := range services {
+		matches := portRegex.FindAllStringSubmatch(service.Args+service.Env, -1)
+		for _, match := range matches {
+			if _, exists := ports[match[0]]; !exists {
+				ports[match[0]] = strconv.Itoa(p)
+				p++
+			}
+		}
+	}
+}
+
+func parsePorts(str string) string {
+	matches := portRegex.FindAllStringSubmatch(str, -1)
+	for _, match := range matches {
+		if _, exists := ports[match[0]]; exists {
+			str = strings.Replace(str, match[0], ports[match[0]], 1)
+		}
+	}
+
+	return str
+}
+
+func startServices(services []Service, port int, parallel bool) error {
 	var err error
 
 	run := func(cmd *exec.Cmd) error {
@@ -245,19 +272,8 @@ func startServices(services []*Service, port int, parallel bool) error {
 			return fmt.Errorf("cmd must not be empty - service %d", i+1)
 		}
 
-		if service.Env != "" && strings.Index(service.Env, "{PORT}") != -1 {
-			p := strconv.Itoa(port + i + 1)
-			ports = append(ports, p)
-			service.Env = strings.Replace(service.Env, "{PORT}", p, -1)
-
-			if service.Args != "" {
-				service.Args = strings.Replace(service.Args, "{PORT}", p, -1)
-			}
-		} else if service.Args != "" && strings.Index(service.Args, "{PORT}") != -1 {
-			p := strconv.Itoa(port + i + 1)
-			ports = append(ports, p)
-			service.Args = strings.Replace(service.Args, "{PORT}", p, -1)
-		}
+		service.Env = parsePorts(service.Env)
+		service.Args = parsePorts(service.Args)
 
 		if service.Dir == "" {
 			if r, e := exec.LookPath(service.Cmd); e == nil {

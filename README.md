@@ -33,7 +33,7 @@ Configuration file must be in json format. Sample configuration file:
         {
             "cmd": "myprogram",
             "dir": "$GOPATH/src/github.com/project",
-            "env": "PORT={PORT}"
+            "env": "PORT={PORT1}"
         },
         {
             "cmd": "otherprogram"
@@ -41,7 +41,7 @@ Configuration file must be in json format. Sample configuration file:
         {
             "cmd": "npm",
             "dir": "~/Projects/mynpm",
-            "args": "run serve -- --port={PORT}"
+            "args": "run serve -- --port={PORT2}"
         }
     ],
     "mappings": [
@@ -55,11 +55,11 @@ Configuration file must be in json format. Sample configuration file:
         },
         {
             "path": "/",
-            "destination": "http://localhost:{PORT3}"
+            "destination": "http://localhost:{PORT2}"
         },
         {
             "path": "/",
-            "destination": "ws://localhost:{PORT3}"
+            "destination": "ws://localhost:{PORT2}"
         }
     ],
     "port": 8000,
@@ -100,12 +100,8 @@ Variable      | Description
 
 ## Ports
 
-Services may have dynamic ports
+Services may have, zero, one or more dynamic port variables. Dynamic port variables can be  declared in `services` section simply by using the format `{PORTxxx}`, e.g. `{PORT1}`. A port will be assigned to the variable and substituted when used in `services` and `mappings` section. 
 
-For each service declaration, as `[services.n]` where n starts with 1
-1. If `{PORT}` is found in `env`, it will be replaced by `[gorexy.port] + n` where `[gorexy.port]` is the port gorexy is set to listen.
-2. The **same** port number will be used in `args` parameter
-3. In each mapping `destination`,  `{PORT1}`, `{PORT2}`, `{PORT3}`...`{PORTn}` will be replaced by its appropriate port
 
 ## Credits
 Websocket information adapted from bradfitz and Fatih Arslan contributions on groups.google.com [thread](https://groups.google.com/forum/#!topic/golang-nuts/KBx9pDlvFOc).
