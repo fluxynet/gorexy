@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fluxynet/gorexy/wsutils"
 )
@@ -34,6 +35,7 @@ type Config struct {
 		Enabled  bool   `json:"enabled"`
 		Certfile string `json:"cert"`
 		Keyfile  string `json:"key"`
+		NoHTTP   bool   `json:"nohttp"`
 	} `json:"https"`
 }
 
@@ -80,6 +82,7 @@ func main() {
 	var (
 		err    error
 		config *Config
+		wg     sync.WaitGroup
 	)
 
 	flagset := flag.NewFlagSet("gorexy", flag.ExitOnError)
@@ -117,20 +120,27 @@ func main() {
 
 	http.HandleFunc("/", forwarder)
 
-	port := strconv.Itoa(config.Port)
-	log.Println("Listening on :" + port)
+	if !config.HTTPS.Enabled || config.HTTPS.NoHTTP {
+		wg.Add(1)
+		port := strconv.Itoa(config.Port)
+		go func() {
+			http.ListenAndServe(":"+port, nil)
+			wg.Done()
+		}()
+		log.Println("HTTP listening on :" + port)
+	}
 
 	if config.HTTPS.Enabled {
-		err = http.ListenAndServeTLS(":"+port, normalizePath(config.HTTPS.Certfile, true), normalizePath(config.HTTPS.Keyfile, true), nil)
-		if err != nil {
-			log.Fatal("Failed to start https server: ", err)
-		}
-	} else {
-		err = http.ListenAndServe(":"+port, nil)
-		if err != nil {
-			log.Fatal("Failed to start http server: ", err)
-		}
+		wg.Add(1)
+		port := strconv.Itoa(config.Port + 1)
+		go func() {
+			http.ListenAndServeTLS(":"+port, normalizePath(config.HTTPS.Certfile, true), normalizePath(config.HTTPS.Keyfile, true), nil)
+			wg.Done()
+		}()
+		log.Println("HTTPS listening on :" + port)
 	}
+
+	wg.Wait()
 	log.Println("Server stopped")
 }
 
@@ -222,7 +232,7 @@ func createProxies(mappings []Mapping) (map[string]*httputil.ReverseProxy, map[s
 
 func initPorts(basePort int, services []Service) {
 	ports = make(map[string]string)
-	p := basePort + 1
+	p := basePort + 2
 
 	for _, service := range services {
 		matches := portRegex.FindAllStringSubmatch(service.Args+service.Env, -1)
