@@ -120,7 +120,7 @@ func main() {
 
 	http.HandleFunc("/", forwarder)
 
-	if !config.HTTPS.Enabled || config.HTTPS.NoHTTP {
+	if !config.HTTPS.Enabled || !config.HTTPS.NoHTTP {
 		wg.Add(1)
 		port := strconv.Itoa(config.Port)
 		go func() {
