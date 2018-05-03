@@ -53,10 +53,22 @@ type Service struct {
 	Args string `json:"args"`
 }
 
+// HTTPProxy represents an http proxy service with a corresponding prefix
+type HTTPProxy struct {
+	Prefix string
+	Proxy  *httputil.ReverseProxy
+}
+
+// WSProxy represents a websocket proxy service with a corresponding prefix
+type WSProxy struct {
+	Prefix string
+	Proxy  *wsutils.ReverseProxy
+}
+
 var (
 	mapping map[string]string
-	htprox  map[string]*httputil.ReverseProxy
-	wsprox  map[string]*wsutils.ReverseProxy
+	htprox  []HTTPProxy
+	wsprox  []WSProxy
 	ports   map[string]string
 	port    int
 
@@ -106,7 +118,7 @@ func main() {
 		config.Port = 8000
 	}
 
-	initPorts(config.Port, config.Services)
+	ports = initPorts(config.Port, config.Services)
 
 	err = startServices(config.Services, config.Port, config.Parallel)
 	if err != nil {
@@ -152,16 +164,16 @@ func main() {
 
 func forwarder(w http.ResponseWriter, r *http.Request) {
 	if wsutils.IsWebsocket(r) {
-		for prefix, proxy := range wsprox {
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				proxy.ServeHTTP(w, r)
+		for _, s := range wsprox {
+			if strings.HasPrefix(r.URL.Path, s.Prefix) {
+				s.Proxy.ServeHTTP(w, r)
 				return
 			}
 		}
 	} else {
-		for prefix, proxy := range htprox {
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				proxy.ServeHTTP(w, r)
+		for _, s := range htprox {
+			if strings.HasPrefix(r.URL.Path, s.Prefix) {
+				s.Proxy.ServeHTTP(w, r)
 				return
 			}
 		}
@@ -199,11 +211,11 @@ func loadConfig(filename string) (*Config, error) {
 	return config, err
 }
 
-func createProxies(mappings []Mapping) (map[string]*httputil.ReverseProxy, map[string]*wsutils.ReverseProxy, error) {
+func createProxies(mappings []Mapping) ([]HTTPProxy, []WSProxy, error) {
 	var (
 		err    error
-		htprox = make(map[string]*httputil.ReverseProxy)
-		wsprox = make(map[string]*wsutils.ReverseProxy)
+		htprox []HTTPProxy
+		wsprox []WSProxy
 	)
 
 	for i, mapping := range mappings {
@@ -225,9 +237,9 @@ func createProxies(mappings []Mapping) (map[string]*httputil.ReverseProxy, map[s
 		}
 
 		if url.Scheme == httpMapping {
-			htprox[mapping.Path] = httputil.NewSingleHostReverseProxy(url)
+			htprox = append(htprox, HTTPProxy{Prefix: mapping.Path, Proxy: httputil.NewSingleHostReverseProxy(url)})
 		} else if url.Scheme == wsMapping {
-			wsprox[mapping.Path] = wsutils.NewReverseProxy(url)
+			wsprox = append(wsprox, WSProxy{Prefix: mapping.Path, Proxy: wsutils.NewReverseProxy(url)})
 		} else {
 			return nil, nil, fmt.Errorf("invalid mapping type %s for %s -> %s", url.Scheme, mapping.Path, mapping.Destination)
 		}
@@ -236,8 +248,8 @@ func createProxies(mappings []Mapping) (map[string]*httputil.ReverseProxy, map[s
 	return htprox, wsprox, err
 }
 
-func initPorts(basePort int, services []Service) {
-	ports = make(map[string]string)
+func initPorts(basePort int, services []Service) map[string]string {
+	ports := make(map[string]string)
 	p := basePort + 2
 
 	for _, service := range services {
@@ -249,6 +261,8 @@ func initPorts(basePort int, services []Service) {
 			}
 		}
 	}
+
+	return ports
 }
 
 func parsePorts(str string) string {
