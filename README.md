@@ -4,6 +4,11 @@ Gorexy is a very simple reverse proxy server for development environments. It is
 
 It is also able to start the services used for reverse proxy.
 
+## Installation
+Install using:
+
+`go get -u github.com/fluxynet/gorexy`
+
 ## Arguments
 
 Parameters | Default       | Description
