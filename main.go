@@ -30,7 +30,6 @@ type Config struct {
 	Mappings []Mapping `json:"mappings"`
 	Services []Service `json:"services"`
 	Port     int       `json:"port"`
-	Parallel bool      `json:"parallel"`
 	HTTPS    struct {
 		Enabled  bool   `json:"enabled"`
 		Certfile string `json:"cert"`
@@ -120,7 +119,7 @@ func main() {
 
 	ports = initPorts(config.Port, config.Services)
 
-	err = startServices(config.Services, config.Port, config.Parallel)
+	err = startServices(config.Services, config.Port)
 	if err != nil {
 		log.Fatalf("Failed to start services: %s", err)
 	}
@@ -276,7 +275,7 @@ func parsePorts(str string) string {
 	return str
 }
 
-func startServices(services []Service, port int, parallel bool) error {
+func startServices(services []Service, port int) error {
 	var err error
 
 	run := func(cmd *exec.Cmd) error {
@@ -348,14 +347,7 @@ func startServices(services []Service, port int, parallel bool) error {
 			cmd.Env = strings.Split(service.Env, " ")
 		}
 
-		if parallel {
-			go run(cmd)
-		} else {
-			err = run(cmd)
-			if err != nil {
-				return err
-			}
-		}
+		go run(cmd)
 	}
 
 	return err
