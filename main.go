@@ -98,10 +98,9 @@ func main() {
 
 	flagset := flag.NewFlagSet("gorexy", flag.ExitOnError)
 	cport := flagset.String("port", "", "Port to listen to")
-	confile := flagset.String("conf", "gorexy.json", "Path to config file")
 	flagset.Parse(os.Args[1:])
 
-	config, err = loadConfig(normalizePath(*confile, true))
+	config, err = loadConfig(normalizePath("gorexy.json", true))
 	if err != nil {
 		log.Fatalf("Failed to load config file: %s", err)
 	}
