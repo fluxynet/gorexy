@@ -18,8 +18,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fluxynet/gorexy/wsutils"
+	"github.com/fsnotify/fsnotify"
 )
 
 const httpMapping = "http"
@@ -46,10 +48,12 @@ type Mapping struct {
 
 //Service represents a service to start
 type Service struct {
-	Dir  string `json:"dir"`
-	Cmd  string `json:"cmd"`
-	Env  string `json:"env"`
-	Args string `json:"args"`
+	Name       string `json:"name"`
+	Dir        string `json:"dir"`
+	Cmd        string `json:"cmd"`
+	Env        string `json:"env"`
+	Args       string `json:"args"`
+	AutoReload bool   `json:"auto_reload"`
 }
 
 // HTTPProxy represents an http proxy service with a corresponding prefix
@@ -118,9 +122,10 @@ func main() {
 
 	ports = initPorts(config.Port, config.Services)
 
-	err = startServices(config.Services, config.Port)
-	if err != nil {
-		log.Fatalf("Failed to start services: %s", err)
+	for _, service := range config.Services {
+		if e := startService(service); e != nil {
+			log.Fatalf("Failed to start service [%s]: %s", service.Name, err)
+		}
 	}
 
 	htprox, wsprox, err = createProxies(config.Mappings)
@@ -140,7 +145,7 @@ func main() {
 			}
 			wg.Done()
 		}()
-		log.Println("HTTP listening on :" + port)
+		log.Printf("HTTP listening on http://127.0.0.1:%s\n", port)
 	}
 
 	if config.HTTPS.Enabled {
@@ -153,7 +158,7 @@ func main() {
 			}
 			wg.Done()
 		}()
-		log.Println("HTTPS listening on :" + port)
+		log.Printf("HTTPS listening on : https://127.0.0.1:%s\n", port)
 	}
 
 	wg.Wait()
@@ -274,84 +279,6 @@ func parsePorts(str string) string {
 	return str
 }
 
-func startServices(services []Service, port int) error {
-	var err error
-
-	run := func(cmd *exec.Cmd) error {
-		var err error
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
-		if err == nil {
-			fmt.Printf("[started] %s\n", cmd.Path)
-		} else {
-			fmt.Printf("[failed] %s - %s\n", cmd.Path, err)
-			return err
-		}
-
-		return err
-	}
-
-	for i, service := range services {
-		var cmd *exec.Cmd
-
-		if service.Cmd == "" {
-			return fmt.Errorf("cmd must not be empty - service %d", i+1)
-		}
-
-		service.Env = parsePorts(service.Env)
-		service.Args = parsePorts(service.Args)
-
-		if service.Dir == "" {
-			if r, e := exec.LookPath(service.Cmd); e == nil {
-				service.Cmd = r
-			} else if r, e := commandGetAbsolute(service.Cmd); e == nil {
-				service.Cmd = r
-			} else {
-				return fmt.Errorf("command %s not found in PATH and %s is not a file", service.Cmd, service.Dir)
-			}
-		} else {
-			service.Dir = normalizePath(service.Dir, true)
-			service.Cmd = normalizePath(service.Cmd, false)
-
-			if r, e := exec.LookPath(service.Cmd); e == nil {
-				service.Cmd = r
-			} else if r, e := commandGetAbsolute(service.Cmd); e == nil {
-				service.Cmd = r
-			} else {
-				relpath := service.Dir + string(os.PathSeparator) + service.Cmd
-				info, e := os.Stat(relpath)
-				if e != nil {
-					return fmt.Errorf("command %s not found in PATH and %s", service.Cmd, service.Dir)
-				} else if info.IsDir() {
-					return fmt.Errorf("command %s not found in PATH and %s is not a file", service.Cmd, service.Dir)
-				}
-				service.Cmd = relpath
-			}
-		}
-
-		if service.Args == "" {
-			cmd = exec.Command(service.Cmd)
-		} else {
-			args := strings.Split(service.Args, " ")
-			cmd = exec.Command(service.Cmd, args...)
-		}
-
-		if service.Dir != "" {
-			cmd.Dir = service.Dir
-		}
-
-		if service.Env != "" {
-			cmd.Env = strings.Split(service.Env, " ")
-		}
-
-		go run(cmd)
-	}
-
-	return err
-}
-
 func commandGetAbsolute(cmd string) (string, error) {
 	var err error
 
@@ -381,4 +308,117 @@ func normalizePath(path string, absolute bool) string {
 	}
 
 	return path
+}
+
+func startService(service Service) error {
+	var cmd *exec.Cmd
+
+	if service.Cmd == "" {
+		return fmt.Errorf("cmd must not be empty")
+	}
+
+	service.Env = parsePorts(service.Env)
+	service.Args = parsePorts(service.Args)
+
+	if service.Dir == "" {
+		if r, e := exec.LookPath(service.Cmd); e == nil {
+			service.Cmd = r
+		} else if r, e := commandGetAbsolute(service.Cmd); e == nil {
+			service.Cmd = r
+		} else {
+			return fmt.Errorf("command %s not found in PATH and %s is not a file", service.Cmd, service.Dir)
+		}
+	} else {
+		service.Dir = normalizePath(service.Dir, true)
+		service.Cmd = normalizePath(service.Cmd, false)
+
+		if r, e := exec.LookPath(service.Cmd); e == nil {
+			service.Cmd = r
+		} else if r, e := commandGetAbsolute(service.Cmd); e == nil {
+			service.Cmd = r
+		} else {
+			relpath := service.Dir + string(os.PathSeparator) + service.Cmd
+			info, e := os.Stat(relpath)
+			if e != nil {
+				return fmt.Errorf("command %s not found in PATH and %s", service.Cmd, service.Dir)
+			} else if info.IsDir() {
+				return fmt.Errorf("command %s not found in PATH and %s is not a file", service.Cmd, service.Dir)
+			}
+			service.Cmd = relpath
+		}
+	}
+
+	if service.Args == "" {
+		cmd = exec.Command(service.Cmd)
+	} else {
+		args := strings.Split(service.Args, " ")
+		cmd = exec.Command(service.Cmd, args...)
+	}
+
+	if service.Dir != "" {
+		cmd.Dir = service.Dir
+	}
+
+	if service.Env != "" {
+		cmd.Env = strings.Split(service.Env, " ")
+	}
+
+	go runCmd(cmd, service)
+
+	return nil
+}
+
+func runCmd(cmd *exec.Cmd, service Service) error {
+	var err error
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+
+	err = func() error {
+		var tries = 10
+		for {
+			cmd.Start()
+			if err == nil {
+				log.Printf("[started] %s\n", service.Name)
+				tries--
+				return nil
+			} else if tries == 0 {
+				log.Printf("[failed] %s - %s\n", service.Name, err)
+				return err
+			}
+
+			time.Sleep(time.Millisecond * 200)
+		}
+	}()
+
+	if service.AutoReload {
+		go watchService(service, cmd)
+	}
+
+	return err
+}
+
+func watchService(service Service, cmd *exec.Cmd) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatalf("[watch failed] %s: %s", service.Name, err)
+	}
+
+	go func() {
+		defer watcher.Close()
+		for {
+			select {
+			case <-watcher.Events:
+				log.Printf("[reloading] %s\n", service.Name)
+				cmd.Process.Kill()
+				startService(service)
+				return
+			}
+		}
+	}()
+
+	log.Printf("[watching] %s\n", service.Name)
+	err = watcher.Add(service.Cmd)
+	if err != nil {
+		log.Fatalf("[watch failed] %s: %s", service.Name, err)
+	}
 }
