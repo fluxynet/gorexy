@@ -102,8 +102,10 @@ func main() {
 		filename string
 	)
 
-	if len(os.Args) == 0 {
+	if len(os.Args[1:]) == 0 {
 		filename = "gorexy.json"
+	} else {
+		filename = os.Args[1]
 	}
 
 	config, err = loadConfig(normalizePath(filename, true))
