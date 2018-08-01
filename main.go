@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"go/build"
 	"io/ioutil"
@@ -32,6 +31,7 @@ type Config struct {
 	Mappings []Mapping `json:"mappings"`
 	Services []Service `json:"services"`
 	Port     int       `json:"port"`
+	Silent   bool      `json:"silent"`
 	HTTPS    struct {
 		Enabled  bool   `json:"enabled"`
 		Certfile string `json:"cert"`
@@ -74,6 +74,7 @@ var (
 	wsprox  []WSProxy
 	ports   map[string]string
 	port    int
+	silent  bool
 
 	portRegex = regexp.MustCompile(`(?m)\{PORT(?P<port>[0-9]+)\}`)
 
@@ -95,25 +96,19 @@ var (
 
 func main() {
 	var (
-		err    error
-		config *Config
-		wg     sync.WaitGroup
+		err      error
+		config   *Config
+		wg       sync.WaitGroup
+		filename string
 	)
 
-	flagset := flag.NewFlagSet("gorexy", flag.ExitOnError)
-	cport := flagset.String("port", "", "Port to listen to")
-	flagset.Parse(os.Args[1:])
-
-	config, err = loadConfig(normalizePath("gorexy.json", true))
-	if err != nil {
-		log.Fatalf("Failed to load config file: %s", err)
+	if len(os.Args) == 0 {
+		filename = "gorexy.json"
 	}
 
-	if *cport != "" {
-		config.Port, err = strconv.Atoi(*cport)
-		if err != nil {
-			log.Fatalf("Invalid port: %s", *cport)
-		}
+	config, err = loadConfig(normalizePath(filename, true))
+	if err != nil {
+		log.Fatalf("Failed to load config file: %s", err)
 	}
 
 	if config.Port == 0 {
@@ -121,6 +116,7 @@ func main() {
 	}
 
 	ports = initPorts(config.Port, config.Services)
+	silent = config.Silent
 
 	for _, service := range config.Services {
 		if e := startService(service); e != nil {
@@ -370,8 +366,11 @@ func startService(service Service) error {
 
 func runCmd(cmd *exec.Cmd, service Service) error {
 	var err error
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+
+	if !silent {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 
 	err = func() error {
 		var tries = 10
