@@ -54,6 +54,7 @@ type Service struct {
 	Env        string `json:"env"`
 	Args       string `json:"args"`
 	AutoReload bool   `json:"auto_reload"`
+	Silent     bool   `json:"silent"`
 }
 
 // HTTPProxy represents an http proxy service with a corresponding prefix
@@ -369,7 +370,7 @@ func startService(service Service) error {
 func runCmd(cmd *exec.Cmd, service Service) error {
 	var err error
 
-	if !silent {
+	if !silent && !service.Silent {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
